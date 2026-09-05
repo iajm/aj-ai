@@ -1,3 +1,4 @@
+import { requireUser } from "../../lib/auth";
 import { createClient } from "../../lib/supabase/server";
 import { getConversations } from "../../lib/conversations";
 import { getProjects } from "../../lib/projects";
@@ -13,6 +14,8 @@ type ConversationPageProps = {
 export default async function ConversationPage({
   params,
 }: ConversationPageProps) {
+  await requireUser();
+
   const { id } = await params;
   const supabase = await createClient();
 
