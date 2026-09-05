@@ -1,3 +1,4 @@
+import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { createClient } from "../../lib/supabase/server";
@@ -6,7 +7,12 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+});
+
 const OPENAI_MODEL = "gpt-5.6-luna";
+const ANTHROPIC_MODEL = "claude-sonnet-5";
 
 export async function POST(request: Request) {
   try {
@@ -22,18 +28,18 @@ export async function POST(request: Request) {
       );
     }
 
-    // GPT only for this milestone.
-    // Claude gets connected after GPT passes.
-    if (selectedModel !== "gpt") {
+    if (
+      selectedModel !== "gpt" &&
+      selectedModel !== "claude"
+    ) {
       return NextResponse.json(
-        { error: "Claude is not connected yet." },
+        { error: "Invalid model selection." },
         { status: 400 }
       );
     }
 
     const supabase = await createClient();
 
-    // Confirm that the request belongs to a signed-in AJ user.
     const {
       data: { user },
       error: userError,
@@ -46,8 +52,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Verify that this conversation exists and belongs to the user.
-    // RLS provides the ownership boundary.
     const {
       data: conversation,
       error: conversationError,
@@ -64,8 +68,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Load AJ's canonical conversation history from the database.
-    // Do not trust browser-supplied history.
     const {
       data: messages,
       error: messagesError,
@@ -89,41 +91,69 @@ export async function POST(request: Request) {
       );
     }
 
-    const input = (messages ?? []).map((message) => ({
-      role:
-        message.role === "assistant"
-          ? ("assistant" as const)
-          : ("user" as const),
-      content: message.content,
-    }));
+    let assistantText: string;
+    let provider: "openai" | "anthropic";
+    let model: string;
 
-    // Real OpenAI API call.
-    const response = await openai.responses.create({
-      model: OPENAI_MODEL,
+    if (selectedModel === "gpt") {
+      const input = (messages ?? []).map((message) => ({
+        role:
+          message.role === "assistant"
+            ? ("assistant" as const)
+            : ("user" as const),
+        content: message.content,
+      }));
 
-      instructions:
-        "You are AJ, a personal AI assistant. Respond naturally and helpfully. Continue the conversation using the provided conversation history.",
+      const response = await openai.responses.create({
+        model: OPENAI_MODEL,
 
-      input,
-    });
+        instructions:
+          "You are AJ, a personal AI assistant. Respond naturally and helpfully. Continue the conversation using the provided conversation history.",
 
-    const assistantText = response.output_text.trim();
+        input,
+      });
 
-    if (!assistantText) {
-      console.error(
-        "OpenAI returned no assistant text:",
-        response.id
+      assistantText = response.output_text.trim();
+      provider = "openai";
+      model = OPENAI_MODEL;
+    } else {
+      const claudeMessages = (messages ?? []).map(
+        (message) => ({
+          role:
+            message.role === "assistant"
+              ? ("assistant" as const)
+              : ("user" as const),
+          content: message.content,
+        })
       );
 
+      const response = await anthropic.messages.create({
+        model: ANTHROPIC_MODEL,
+        max_tokens: 1024,
+
+        system:
+          "You are AJ, a personal AI assistant. Respond naturally and helpfully. Continue the conversation using the provided conversation history.",
+
+        messages: claudeMessages,
+      });
+
+      assistantText = response.content
+        .filter((block) => block.type === "text")
+        .map((block) => block.text)
+        .join("\n")
+        .trim();
+
+      provider = "anthropic";
+      model = ANTHROPIC_MODEL;
+    }
+
+    if (!assistantText) {
       return NextResponse.json(
-        { error: "GPT returned an empty response." },
+        { error: "The selected model returned an empty response." },
         { status: 502 }
       );
     }
 
-    // IMPORTANT:
-    // Persist the paid model response on the server BEFORE
-    // returning it to the browser.
     const {
       data: savedAssistantMessage,
       error: assistantMessageError,
@@ -133,8 +163,8 @@ export async function POST(request: Request) {
         conversation_id: conversationId,
         role: "assistant",
         content: assistantText,
-        provider: "openai",
-        model: OPENAI_MODEL,
+        provider,
+        model,
       })
       .select(
         "id, role, content, provider, model, sequence, created_at"
@@ -153,14 +183,12 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            "GPT replied, but AJ could not save the response.",
+            "The model replied, but AJ could not save the response.",
         },
         { status: 500 }
       );
     }
 
-    // Only return the assistant message after it exists
-    // durably in AJ's database.
     return NextResponse.json({
       message: {
         id: savedAssistantMessage.id,
