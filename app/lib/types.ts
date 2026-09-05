@@ -16,3 +16,10 @@ export type ChatMessage = {
   createdAt: string;
   status: MessageStatus;
 };
+
+export type ConversationSummary = {
+  id: string;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+};

@@ -1,24 +1,17 @@
 "use client";
 
-import { ChatMessage, ConversationSummary } from "../../lib/types";
-import { useChat } from "../../hooks/useChat";
-import ChatSidebar from "../../components/chat-sidebar";
+import { useChat } from "./hooks/useChat";
+import { ConversationSummary } from "./lib/types";
+import ChatSidebar from "./components/chat-sidebar";
 
-type ChatClientProps = {
-  conversationId: string;
-  title: string | null;
-  initialMessages: ChatMessage[];
+type HomeClientProps = {
   conversations: ConversationSummary[];
 };
 
-export default function ChatClient({
-  conversationId,
-  title,
-  initialMessages,
+export default function HomeClient({
   conversations,
-}: ChatClientProps) {
+}: HomeClientProps) {
   const {
-    messages,
     selectedModel,
     setSelectedModel,
     input,
@@ -26,10 +19,7 @@ export default function ChatClient({
     sendMessage,
     error,
     sending,
-  } = useChat({
-    conversationId,
-    initialMessages,
-  });
+  } = useChat();
 
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100">
@@ -39,17 +29,17 @@ export default function ChatClient({
 
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-[70px] items-center justify-between border-b border-zinc-800 px-6">
-          <div className="min-w-0">
+          <div>
             <div className="text-xs text-zinc-500">
               AJ AI
             </div>
 
-            <h1 className="truncate font-medium">
-              {title ?? "New Chat"}
-            </h1>
+            <div className="font-medium">
+              New Chat
+            </div>
           </div>
 
-          <div className="ml-4 flex shrink-0 rounded-lg bg-zinc-900 p-1">
+          <div className="flex rounded-lg bg-zinc-900 p-1">
             <button
               type="button"
               onClick={() =>
@@ -80,58 +70,16 @@ export default function ChatClient({
           </div>
         </header>
 
-        <section className="flex-1 space-y-5 overflow-y-auto px-6 py-8">
-          {messages.map((message) => {
-            const label =
-              message.role === "user"
-                ? "YOU"
-                : message.provider === "openai"
-                  ? "GPT"
-                  : message.provider ===
-                      "anthropic"
-                    ? "CLAUDE"
-                    : "ASSISTANT";
+        <section className="flex flex-1 items-center justify-center">
+          <div className="text-center">
+            <h1 className="text-2xl font-semibold">
+              How can I help?
+            </h1>
 
-            return (
-              <div
-                key={message.id}
-                className={
-                  message.role === "user"
-                    ? "ml-auto max-w-2xl"
-                    : "mr-auto max-w-2xl"
-                }
-              >
-                <div className="mb-1 text-xs text-zinc-500">
-                  {label}
-                </div>
-
-                <div
-                  className={`rounded-2xl px-4 py-3 ${
-                    message.role === "user"
-                      ? "bg-zinc-800"
-                      : "bg-zinc-900"
-                  } ${
-                    message.status === "pending"
-                      ? "opacity-60"
-                      : ""
-                  } ${
-                    message.status === "failed"
-                      ? "border border-red-800"
-                      : ""
-                  }`}
-                >
-                  {message.content}
-                </div>
-
-                {message.status ===
-                  "failed" && (
-                  <div className="mt-1 text-xs text-red-400">
-                    Failed to save
-                  </div>
-                )}
-              </div>
-            );
-          })}
+            <p className="mt-2 text-sm text-zinc-500">
+              One memory. Two AI brains.
+            </p>
+          </div>
         </section>
 
         <footer className="border-t border-zinc-800 p-4">
@@ -150,12 +98,12 @@ export default function ChatClient({
                   sendMessage(input);
                 }
               }}
+              disabled={sending}
               placeholder={`Message AJ using ${
                 selectedModel === "gpt"
                   ? "GPT"
                   : "Claude"
               }...`}
-              disabled={sending}
               className="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 outline-none disabled:opacity-50"
             />
 

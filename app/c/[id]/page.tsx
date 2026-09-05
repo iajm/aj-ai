@@ -1,4 +1,5 @@
 import { createClient } from "../../lib/supabase/server";
+import { getConversations } from "../../lib/conversations";
 import { ChatMessage } from "../../lib/types";
 import ChatClient from "./chat-client";
 
@@ -14,8 +15,6 @@ export default async function ConversationPage({
   const { id } = await params;
   const supabase = await createClient();
 
-  // Verify the conversation exists and belongs
-  // to the currently authenticated user.
   const {
     data: conversation,
     error: conversationError,
@@ -61,6 +60,7 @@ export default async function ConversationPage({
   const initialMessages: ChatMessage[] =
     (rows ?? []).map((message) => ({
       id: message.id,
+
       role:
         message.role === "assistant"
           ? "assistant"
@@ -80,11 +80,15 @@ export default async function ConversationPage({
       status: "sent",
     }));
 
+  const conversations =
+    await getConversations();
+
   return (
     <ChatClient
       conversationId={conversation.id}
       title={conversation.title}
       initialMessages={initialMessages}
+      conversations={conversations}
     />
   );
 }
