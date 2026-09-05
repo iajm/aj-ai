@@ -31,7 +31,7 @@ export default function ChatSidebar({
           href="/"
           className="mb-3 block px-2 py-2 text-sm font-semibold text-zinc-100"
         >
-          AJ AI
+          ClaudeGPT
         </Link>
 
         <Link

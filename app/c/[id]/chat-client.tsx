@@ -48,7 +48,7 @@ export default function ChatClient({
         <header className="flex h-[70px] items-center justify-between border-b border-zinc-800 px-6">
           <div className="min-w-0">
             <div className="text-xs text-zinc-500">
-              AJ AI
+              ClaudeGPT
             </div>
 
             <h1 className="truncate font-medium">

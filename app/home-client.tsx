@@ -37,7 +37,7 @@ export default function HomeClient({
         <header className="flex h-[70px] items-center justify-between border-b border-zinc-800 px-6">
           <div>
             <div className="text-xs text-zinc-500">
-              AJ AI
+              ClaudeGPT
             </div>
 
             <div className="font-medium">
