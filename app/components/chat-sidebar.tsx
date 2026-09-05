@@ -6,6 +6,7 @@ import {
   ConversationSummary,
   ProjectSummary,
 } from "../lib/types";
+import CreateProjectButton from "./create-project-button";
 
 type ChatSidebarProps = {
   conversations: ConversationSummary[];
@@ -51,36 +52,36 @@ export default function ChatSidebar({
             Projects
           </span>
 
-          <span
-            title="Project creation UI coming next"
-            className="text-sm text-zinc-600"
-          >
-            +
-          </span>
+          <CreateProjectButton />
         </div>
 
-        <div className="space-y-1">
-          {projects.map((project) => {
-            const href = `/projects/${project.id}`;
+        {projects.length === 0 ? (
+          <p className="px-3 py-2 text-sm text-zinc-600">
+            No projects yet
+          </p>
+        ) : (
+          <div className="space-y-1">
+            {projects.map((project) => {
+              const href = `/projects/${project.id}`;
+              const active = pathname === href;
 
-            const active =
-              pathname === href;
-
-            return (
-              <Link
-                key={project.id}
-                href={href}
-                className={`block truncate rounded-lg px-3 py-2 text-sm transition ${
-                  active
-                    ? "bg-zinc-800 text-zinc-100"
-                    : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
-                }`}
-              >
-                {project.name}
-              </Link>
-            );
-          })}
-        </div>
+              return (
+                <Link
+                  key={project.id}
+                  href={href}
+                  title={project.name}
+                  className={`block truncate rounded-lg px-3 py-2 text-sm transition ${
+                    active
+                      ? "bg-zinc-800 text-zinc-100"
+                      : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+                  }`}
+                >
+                  {project.name}
+                </Link>
+              );
+            })}
+          </div>
+        )}
 
         <div className="mb-2 mt-6 px-2 text-xs font-medium uppercase tracking-wide text-zinc-600">
           Chats
@@ -95,9 +96,7 @@ export default function ChatSidebar({
             {regularConversations.map(
               (conversation) => {
                 const href = `/c/${conversation.id}`;
-
-                const active =
-                  pathname === href;
+                const active = pathname === href;
 
                 return (
                   <Link
