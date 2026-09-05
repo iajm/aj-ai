@@ -20,6 +20,16 @@ export type ChatMessage = {
 export type ConversationSummary = {
   id: string;
   title: string | null;
+  projectId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProjectSummary = {
+  id: string;
+  name: string;
+  description: string | null;
+  instructions: string | null;
   createdAt: string;
   updatedAt: string;
 };

@@ -1,5 +1,6 @@
 import { createClient } from "../../lib/supabase/server";
 import { getConversations } from "../../lib/conversations";
+import { getProjects } from "../../lib/projects";
 import { ChatMessage } from "../../lib/types";
 import ChatClient from "./chat-client";
 
@@ -34,18 +35,16 @@ export default async function ConversationPage({
     );
   }
 
-  const {
-    data: rows,
-    error: messagesError,
-  } = await supabase
-    .from("messages")
-    .select(
-      "id, role, content, provider, model, sequence, created_at"
-    )
-    .eq("conversation_id", id)
-    .order("sequence", {
-      ascending: true,
-    });
+  const { data: rows, error: messagesError } =
+    await supabase
+      .from("messages")
+      .select(
+        "id, role, content, provider, model, sequence, created_at"
+      )
+      .eq("conversation_id", id)
+      .order("sequence", {
+        ascending: true,
+      });
 
   if (messagesError) {
     return (
@@ -60,28 +59,27 @@ export default async function ConversationPage({
   const initialMessages: ChatMessage[] =
     (rows ?? []).map((message) => ({
       id: message.id,
-
       role:
         message.role === "assistant"
           ? "assistant"
           : "user",
-
       content: message.content,
-
       provider:
         message.provider === "openai" ||
         message.provider === "anthropic"
           ? message.provider
           : null,
-
       model: message.model,
       sequence: message.sequence,
       createdAt: message.created_at,
       status: "sent",
     }));
 
-  const conversations =
-    await getConversations();
+  const [conversations, projects] =
+    await Promise.all([
+      getConversations(),
+      getProjects(),
+    ]);
 
   return (
     <ChatClient
@@ -89,6 +87,7 @@ export default async function ConversationPage({
       title={conversation.title}
       initialMessages={initialMessages}
       conversations={conversations}
+      projects={projects}
     />
   );
 }

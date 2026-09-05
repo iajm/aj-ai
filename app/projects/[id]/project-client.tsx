@@ -1,21 +1,26 @@
 "use client";
 
-import ChatSidebar from "./components/chat-sidebar";
-import { useChat } from "./hooks/useChat";
+import Link from "next/link";
+import ChatSidebar from "../../components/chat-sidebar";
+import { useChat } from "../../hooks/useChat";
 import {
   ConversationSummary,
   ProjectSummary,
-} from "./lib/types";
+} from "../../lib/types";
 
-type HomeClientProps = {
+type ProjectClientProps = {
+  project: ProjectSummary;
   conversations: ConversationSummary[];
+  projectConversations: ConversationSummary[];
   projects: ProjectSummary[];
 };
 
-export default function HomeClient({
+export default function ProjectClient({
+  project,
   conversations,
+  projectConversations,
   projects,
-}: HomeClientProps) {
+}: ProjectClientProps) {
   const {
     selectedModel,
     setSelectedModel,
@@ -24,7 +29,9 @@ export default function HomeClient({
     sendMessage,
     error,
     sending,
-  } = useChat();
+  } = useChat({
+    projectId: project.id,
+  });
 
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100">
@@ -37,12 +44,12 @@ export default function HomeClient({
         <header className="flex h-[70px] items-center justify-between border-b border-zinc-800 px-6">
           <div>
             <div className="text-xs text-zinc-500">
-              AJ AI
+              Project
             </div>
 
-            <div className="font-medium">
-              New Chat
-            </div>
+            <h1 className="font-medium">
+              {project.name}
+            </h1>
           </div>
 
           <div className="flex rounded-lg bg-zinc-900 p-1">
@@ -76,15 +83,39 @@ export default function HomeClient({
           </div>
         </header>
 
-        <section className="flex flex-1 items-center justify-center">
-          <div className="text-center">
-            <h1 className="text-2xl font-semibold">
-              How can I help?
-            </h1>
+        <section className="flex-1 overflow-y-auto p-8">
+          <div className="mx-auto max-w-3xl">
+            <h2 className="text-3xl font-semibold">
+              {project.name}
+            </h2>
 
-            <p className="mt-2 text-sm text-zinc-500">
-              One memory. Two AI brains.
+            <p className="mt-2 text-zinc-500">
+              Chats and context for this project.
             </p>
+
+            {projectConversations.length >
+              0 && (
+              <div className="mt-8">
+                <div className="mb-3 text-sm font-medium text-zinc-400">
+                  Recent chats
+                </div>
+
+                <div className="space-y-2">
+                  {projectConversations.map(
+                    (conversation) => (
+                      <Link
+                        key={conversation.id}
+                        href={`/c/${conversation.id}`}
+                        className="block rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 transition hover:bg-zinc-800"
+                      >
+                        {conversation.title ??
+                          "Untitled chat"}
+                      </Link>
+                    )
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </section>
 
@@ -105,11 +136,7 @@ export default function HomeClient({
                 }
               }}
               disabled={sending}
-              placeholder={`Message AJ using ${
-                selectedModel === "gpt"
-                  ? "GPT"
-                  : "Claude"
-              }...`}
+              placeholder={`Message AJ in ${project.name}...`}
               className="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 outline-none disabled:opacity-50"
             />
 

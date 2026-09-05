@@ -1,14 +1,19 @@
 "use client";
 
-import { ChatMessage, ConversationSummary } from "../../lib/types";
-import { useChat } from "../../hooks/useChat";
 import ChatSidebar from "../../components/chat-sidebar";
+import { useChat } from "../../hooks/useChat";
+import {
+  ChatMessage,
+  ConversationSummary,
+  ProjectSummary,
+} from "../../lib/types";
 
 type ChatClientProps = {
   conversationId: string;
   title: string | null;
   initialMessages: ChatMessage[];
   conversations: ConversationSummary[];
+  projects: ProjectSummary[];
 };
 
 export default function ChatClient({
@@ -16,6 +21,7 @@ export default function ChatClient({
   title,
   initialMessages,
   conversations,
+  projects,
 }: ChatClientProps) {
   const {
     messages,
@@ -35,6 +41,7 @@ export default function ChatClient({
     <div className="flex h-screen bg-zinc-950 text-zinc-100">
       <ChatSidebar
         conversations={conversations}
+        projects={projects}
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
