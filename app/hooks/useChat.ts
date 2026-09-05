@@ -3,7 +3,12 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "../lib/supabase/client";
-import { ChatMessage, ModelId } from "../lib/types";
+import {
+  ChatAttachment,
+  ChatMessage,
+  ModelId,
+  PendingAttachment,
+} from "../lib/types";
 
 type UseChatOptions = {
   conversationId?: string | null;
@@ -30,6 +35,33 @@ type StreamEvent =
       error: string;
     };
 
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
+const MAX_FILES = 5;
+
+const ALLOWED_EXTENSIONS = [
+  "png", "jpg", "jpeg", "webp", "gif",
+  "pdf", "txt", "md", "markdown", "csv", "json",
+  "js", "jsx", "ts", "tsx", "html", "css",
+  "py", "java", "c", "cpp", "h", "hpp",
+  "cs", "go", "rs", "php", "rb", "sh", "sql",
+  "xml", "yaml", "yml",
+];
+
+function extensionOf(filename: string) {
+  return filename.split(".").pop()?.toLowerCase() ?? "";
+}
+
+function safeFilename(filename: string) {
+  const extension = extensionOf(filename);
+
+  const base = filename
+    .replace(/\.[^/.]+$/, "")
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .slice(0, 80);
+
+  return extension ? `${base}.${extension}` : base;
+}
+
 export function useChat({
   conversationId = null,
   projectId = null,
@@ -49,10 +81,15 @@ export function useChat({
   const [streamingMessageId, setStreamingMessageId] =
     useState<string | null>(null);
 
+  const [pendingAttachments, setPendingAttachments] =
+    useState<PendingAttachment[]>([]);
+
   const abortControllerRef =
     useRef<AbortController | null>(null);
 
   const sendingRef = useRef(false);
+  const activeConversationRef =
+    useRef<string | null>(conversationId);
 
   const router = useRouter();
   const supabase = createClient();
@@ -61,22 +98,95 @@ export function useChat({
     abortControllerRef.current?.abort();
   }
 
+  function addAttachments(files: FileList | File[]) {
+    setError(null);
+
+    const incoming = Array.from(files);
+
+    const accepted: PendingAttachment[] = [];
+
+    for (const file of incoming) {
+      if (
+        pendingAttachments.length + accepted.length >=
+        MAX_FILES
+      ) {
+        setError(`You can attach up to ${MAX_FILES} files.`);
+        break;
+      }
+
+      if (file.size > MAX_FILE_SIZE) {
+        setError(`${file.name} is larger than 20 MB.`);
+        continue;
+      }
+
+      const extension = extensionOf(file.name);
+
+      if (!ALLOWED_EXTENSIONS.includes(extension)) {
+        setError(`${file.name} is not supported yet.`);
+        continue;
+      }
+
+      accepted.push({
+        id: crypto.randomUUID(),
+        file,
+        previewUrl: file.type.startsWith("image/")
+          ? URL.createObjectURL(file)
+          : null,
+      });
+    }
+
+    if (accepted.length) {
+      setPendingAttachments((previous) => [
+        ...previous,
+        ...accepted,
+      ]);
+    }
+  }
+
+  function removeAttachment(id: string) {
+    setPendingAttachments((previous) => {
+      const target = previous.find(
+        (attachment) => attachment.id === id
+      );
+
+      if (target?.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+
+      return previous.filter(
+        (attachment) => attachment.id !== id
+      );
+    });
+  }
+
   async function sendMessage(text: string) {
     const trimmed = text.trim();
+    const filesToSend = [...pendingAttachments];
 
-    if (!trimmed || sendingRef.current) {
+    if (
+      (!trimmed && filesToSend.length === 0) ||
+      sendingRef.current
+    ) {
       return;
     }
 
     sendingRef.current = true;
-
     setError(null);
     setSending(true);
     setInput("");
+    setPendingAttachments([]);
 
-    let activeConversationId = conversationId;
+    let activeConversationId =
+      activeConversationRef.current;
+
     let createdNewConversation = false;
     let temporaryAssistantId: string | null = null;
+
+    const displayText =
+      trimmed ||
+      `Attached ${filesToSend.length === 1 ? "file" : "files"}: ${filesToSend
+        .map((item) => item.file.name)
+        .join(", ")}`;
 
     try {
       if (!activeConversationId) {
@@ -86,7 +196,10 @@ export function useChat({
         } = await supabase
           .from("conversations")
           .insert({
-            title: trimmed.slice(0, 40),
+            title: trimmed
+              ? trimmed.slice(0, 40)
+              : filesToSend[0]?.file.name.slice(0, 40) ??
+                "Attachment",
             project_id: projectId,
           })
           .select("id")
@@ -99,10 +212,12 @@ export function useChat({
           );
 
           setError("Could not create conversation.");
+          setPendingAttachments(filesToSend);
           return;
         }
 
         activeConversationId = conversation.id;
+        activeConversationRef.current = conversation.id;
         createdNewConversation = true;
       }
 
@@ -111,12 +226,24 @@ export function useChat({
       const pendingUserMessage: ChatMessage = {
         id: temporaryUserId,
         role: "user",
-        content: trimmed,
+        content: displayText,
         provider: null,
         model: null,
         sequence: null,
         createdAt: new Date().toISOString(),
         status: "pending",
+        attachments: filesToSend.map((item) => ({
+          id: item.id,
+          messageId: temporaryUserId,
+          conversationId: activeConversationId!,
+          originalFilename: item.file.name,
+          mimeType:
+            item.file.type || "application/octet-stream",
+          sizeBytes: item.file.size,
+          storageBucket: "chat-attachments",
+          storagePath: "",
+          url: item.previewUrl,
+        })),
       };
 
       setMessages((previous) => [
@@ -132,7 +259,7 @@ export function useChat({
         .insert({
           conversation_id: activeConversationId,
           role: "user",
-          content: trimmed,
+          content: displayText,
           provider: null,
           model: null,
         })
@@ -162,6 +289,98 @@ export function useChat({
         return;
       }
 
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError || !user) {
+        throw new Error("Could not verify your account.");
+      }
+
+      const savedAttachments: ChatAttachment[] = [];
+
+      for (const pending of filesToSend) {
+        const filename =
+          `${crypto.randomUUID()}-${safeFilename(
+            pending.file.name
+          )}`;
+
+        const storagePath =
+          `${user.id}/${activeConversationId}/${savedUserMessage.id}/${filename}`;
+
+        const { error: uploadError } =
+          await supabase.storage
+            .from("chat-attachments")
+            .upload(storagePath, pending.file, {
+              contentType:
+                pending.file.type ||
+                "application/octet-stream",
+              upsert: false,
+            });
+
+        if (uploadError) {
+          console.error(
+            "Attachment upload failed:",
+            uploadError
+          );
+
+          throw new Error(
+            `Could not upload ${pending.file.name}.`
+          );
+        }
+
+        const {
+          data: attachmentRow,
+          error: attachmentError,
+        } = await supabase
+          .from("message_attachments")
+          .insert({
+            user_id: user.id,
+            conversation_id: activeConversationId,
+            message_id: savedUserMessage.id,
+            storage_bucket: "chat-attachments",
+            storage_path: storagePath,
+            original_filename: pending.file.name,
+            mime_type:
+              pending.file.type ||
+              "application/octet-stream",
+            size_bytes: pending.file.size,
+          })
+          .select(
+            "id, message_id, conversation_id, storage_bucket, storage_path, original_filename, mime_type, size_bytes"
+          )
+          .single();
+
+        if (attachmentError || !attachmentRow) {
+          console.error(
+            "Attachment metadata insert failed:",
+            attachmentError
+          );
+
+          await supabase.storage
+            .from("chat-attachments")
+            .remove([storagePath]);
+
+          throw new Error(
+            `Could not save ${pending.file.name}.`
+          );
+        }
+
+        savedAttachments.push({
+          id: attachmentRow.id,
+          messageId: attachmentRow.message_id,
+          conversationId: attachmentRow.conversation_id,
+          storageBucket: attachmentRow.storage_bucket,
+          storagePath: attachmentRow.storage_path,
+          originalFilename:
+            attachmentRow.original_filename,
+          mimeType: attachmentRow.mime_type,
+          sizeBytes: attachmentRow.size_bytes,
+          url: pending.previewUrl,
+        });
+      }
+
       setMessages((previous) =>
         previous.map((message) =>
           message.id === temporaryUserId
@@ -171,6 +390,7 @@ export function useChat({
                 sequence: savedUserMessage.sequence,
                 createdAt: savedUserMessage.created_at,
                 status: "sent",
+                attachments: savedAttachments,
               }
             : message
         )
@@ -191,6 +411,7 @@ export function useChat({
         sequence: null,
         createdAt: new Date().toISOString(),
         status: "pending",
+        attachments: [],
       };
 
       setMessages((previous) => [
@@ -261,7 +482,6 @@ export function useChat({
                 : message
             )
           );
-
           return;
         }
 
@@ -276,7 +496,6 @@ export function useChat({
                 : message
             )
           );
-
           return;
         }
 
@@ -286,11 +505,13 @@ export function useChat({
           setMessages((previous) =>
             previous.map((message) =>
               message.id === temporaryAssistantId
-                ? event.message
+                ? {
+                    ...event.message,
+                    attachments: [],
+                  }
                 : message
             )
           );
-
           return;
         }
 
@@ -383,5 +604,8 @@ export function useChat({
     sending,
     isStreaming,
     streamingMessageId,
+    pendingAttachments,
+    addAttachments,
+    removeAttachment,
   };
 }

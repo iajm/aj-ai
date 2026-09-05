@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import ChatSidebar from "./chat-sidebar";
 import { useChat } from "../hooks/useChat";
 import {
+  ChatAttachment,
   ChatMessage,
   ConversationSummary,
   ProjectSummary,
@@ -24,6 +25,18 @@ type ChatViewProps = {
   emptySubtitle?: string;
   projectConversations?: ConversationSummary[];
 };
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024)
+    return `${(bytes / 1024).toFixed(1)} KB`;
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function isImage(attachment: ChatAttachment) {
+  return attachment.mimeType.startsWith("image/");
+}
 
 export default function ChatView({
   conversations,
@@ -49,6 +62,9 @@ export default function ChatView({
     sending,
     isStreaming,
     streamingMessageId,
+    pendingAttachments,
+    addAttachments,
+    removeAttachment,
   } = useChat({
     conversationId,
     projectId,
@@ -57,6 +73,7 @@ export default function ChatView({
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [copiedId, setCopiedId] =
     useState<string | null>(null);
@@ -70,7 +87,6 @@ export default function ChatView({
 
   useEffect(() => {
     const textarea = textareaRef.current;
-
     if (!textarea) return;
 
     textarea.style.height = "auto";
@@ -106,7 +122,6 @@ export default function ChatView({
             <div className="text-[11px] text-zinc-600">
               {pageLabel}
             </div>
-
             <div className="truncate text-sm font-medium text-zinc-300">
               {pageTitle}
             </div>
@@ -147,7 +162,7 @@ export default function ChatView({
               </div>
             </div>
           ) : (
-            <div className="mx-auto w-full max-w-3xl px-5 pb-40 pt-8">
+            <div className="mx-auto w-full max-w-3xl px-5 pb-48 pt-8">
               <div className="space-y-8">
                 {messages.map((message) => {
                   const isLive =
@@ -174,6 +189,65 @@ export default function ChatView({
                     >
                       {message.role === "user" ? (
                         <div className="max-w-[80%] rounded-[22px] bg-[#2a2a2d] px-4 py-3 text-[15px] leading-6 text-zinc-100">
+                          {message.attachments &&
+                            message.attachments.length > 0 && (
+                              <div className="mb-3 flex max-w-md flex-wrap justify-end gap-2">
+                                {message.attachments.map(
+                                  (attachment) =>
+                                    isImage(attachment) &&
+                                    attachment.url ? (
+                                      <a
+                                        key={attachment.id}
+                                        href={attachment.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="block overflow-hidden rounded-xl border border-white/10"
+                                      >
+                                        <img
+                                          src={attachment.url}
+                                          alt={attachment.originalFilename}
+                                          className="max-h-64 max-w-full object-cover"
+                                        />
+                                      </a>
+                                    ) : (
+                                      <a
+                                        key={attachment.id}
+                                        href={
+                                          attachment.url ?? undefined
+                                        }
+                                        target={
+                                          attachment.url
+                                            ? "_blank"
+                                            : undefined
+                                        }
+                                        rel="noreferrer"
+                                        className="flex max-w-[260px] items-center gap-3 rounded-xl border border-white/10 bg-black/15 px-3 py-2"
+                                      >
+                                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/5 text-xs font-semibold uppercase text-zinc-400">
+                                          {attachment.originalFilename
+                                            .split(".")
+                                            .pop()
+                                            ?.slice(0, 4) ?? "FILE"}
+                                        </div>
+
+                                        <div className="min-w-0">
+                                          <div className="truncate text-sm text-zinc-200">
+                                            {
+                                              attachment.originalFilename
+                                            }
+                                          </div>
+                                          <div className="text-[11px] text-zinc-500">
+                                            {formatFileSize(
+                                              attachment.sizeBytes
+                                            )}
+                                          </div>
+                                        </div>
+                                      </a>
+                                    )
+                                )}
+                              </div>
+                            )}
+
                           <div className="whitespace-pre-wrap">
                             {message.content}
                           </div>
@@ -209,132 +283,86 @@ export default function ChatView({
                               <ReactMarkdown
                                 remarkPlugins={[remarkGfm]}
                                 components={{
-                                  p({ children }) {
-                                    return (
-                                      <p className="my-4 first:mt-0 last:mb-0">
+                                  p: ({ children }) => (
+                                    <p className="my-4 first:mt-0 last:mb-0">
+                                      {children}
+                                    </p>
+                                  ),
+                                  strong: ({ children }) => (
+                                    <strong className="font-semibold text-zinc-50">
+                                      {children}
+                                    </strong>
+                                  ),
+                                  ul: ({ children }) => (
+                                    <ul className="my-4 list-disc space-y-2 pl-6">
+                                      {children}
+                                    </ul>
+                                  ),
+                                  ol: ({ children }) => (
+                                    <ol className="my-4 list-decimal space-y-2 pl-6">
+                                      {children}
+                                    </ol>
+                                  ),
+                                  li: ({ children }) => (
+                                    <li className="pl-1">{children}</li>
+                                  ),
+                                  h1: ({ children }) => (
+                                    <h1 className="mb-4 mt-7 text-2xl font-semibold text-zinc-50">
+                                      {children}
+                                    </h1>
+                                  ),
+                                  h2: ({ children }) => (
+                                    <h2 className="mb-3 mt-7 text-xl font-semibold text-zinc-50">
+                                      {children}
+                                    </h2>
+                                  ),
+                                  h3: ({ children }) => (
+                                    <h3 className="mb-2 mt-6 text-lg font-semibold text-zinc-50">
+                                      {children}
+                                    </h3>
+                                  ),
+                                  blockquote: ({ children }) => (
+                                    <blockquote className="my-5 border-l-2 border-zinc-700 pl-4 text-zinc-400">
+                                      {children}
+                                    </blockquote>
+                                  ),
+                                  code: ({ children, className }) =>
+                                    className ? (
+                                      <code className="my-4 block overflow-x-auto rounded-xl bg-[#171719] p-4 font-mono text-sm leading-6 text-zinc-200">
                                         {children}
-                                      </p>
-                                    );
-                                  },
-
-                                  strong({ children }) {
-                                    return (
-                                      <strong className="font-semibold text-zinc-50">
-                                        {children}
-                                      </strong>
-                                    );
-                                  },
-
-                                  ul({ children }) {
-                                    return (
-                                      <ul className="my-4 list-disc space-y-2 pl-6">
-                                        {children}
-                                      </ul>
-                                    );
-                                  },
-
-                                  ol({ children }) {
-                                    return (
-                                      <ol className="my-4 list-decimal space-y-2 pl-6">
-                                        {children}
-                                      </ol>
-                                    );
-                                  },
-
-                                  li({ children }) {
-                                    return (
-                                      <li className="pl-1">
-                                        {children}
-                                      </li>
-                                    );
-                                  },
-
-                                  h1({ children }) {
-                                    return (
-                                      <h1 className="mb-4 mt-7 text-2xl font-semibold text-zinc-50">
-                                        {children}
-                                      </h1>
-                                    );
-                                  },
-
-                                  h2({ children }) {
-                                    return (
-                                      <h2 className="mb-3 mt-7 text-xl font-semibold text-zinc-50">
-                                        {children}
-                                      </h2>
-                                    );
-                                  },
-
-                                  h3({ children }) {
-                                    return (
-                                      <h3 className="mb-2 mt-6 text-lg font-semibold text-zinc-50">
-                                        {children}
-                                      </h3>
-                                    );
-                                  },
-
-                                  blockquote({ children }) {
-                                    return (
-                                      <blockquote className="my-5 border-l-2 border-zinc-700 pl-4 text-zinc-400">
-                                        {children}
-                                      </blockquote>
-                                    );
-                                  },
-
-                                  code({ children, className }) {
-                                    if (className) {
-                                      return (
-                                        <code className="my-4 block overflow-x-auto rounded-xl bg-[#171719] p-4 font-mono text-sm leading-6 text-zinc-200">
-                                          {children}
-                                        </code>
-                                      );
-                                    }
-
-                                    return (
+                                      </code>
+                                    ) : (
                                       <code className="rounded-md bg-white/[0.07] px-1.5 py-0.5 font-mono text-[0.9em] text-zinc-200">
                                         {children}
                                       </code>
-                                    );
-                                  },
-
-                                  a({ children, href }) {
-                                    return (
-                                      <a
-                                        href={href}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="text-blue-400 underline decoration-blue-400/30 underline-offset-2 hover:text-blue-300"
-                                      >
+                                    ),
+                                  a: ({ children, href }) => (
+                                    <a
+                                      href={href}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="text-blue-400 underline decoration-blue-400/30 underline-offset-2 hover:text-blue-300"
+                                    >
+                                      {children}
+                                    </a>
+                                  ),
+                                  table: ({ children }) => (
+                                    <div className="my-5 overflow-x-auto rounded-xl border border-white/5">
+                                      <table className="w-full border-collapse text-sm">
                                         {children}
-                                      </a>
-                                    );
-                                  },
-
-                                  table({ children }) {
-                                    return (
-                                      <div className="my-5 overflow-x-auto rounded-xl border border-white/5">
-                                        <table className="w-full border-collapse text-sm">
-                                          {children}
-                                        </table>
-                                      </div>
-                                    );
-                                  },
-
-                                  th({ children }) {
-                                    return (
-                                      <th className="border-b border-white/5 bg-white/[0.03] px-3 py-2 text-left font-medium text-zinc-300">
-                                        {children}
-                                      </th>
-                                    );
-                                  },
-
-                                  td({ children }) {
-                                    return (
-                                      <td className="border-b border-white/5 px-3 py-2 align-top">
-                                        {children}
-                                      </td>
-                                    );
-                                  },
+                                      </table>
+                                    </div>
+                                  ),
+                                  th: ({ children }) => (
+                                    <th className="border-b border-white/5 bg-white/[0.03] px-3 py-2 text-left font-medium text-zinc-300">
+                                      {children}
+                                    </th>
+                                  ),
+                                  td: ({ children }) => (
+                                    <td className="border-b border-white/5 px-3 py-2 align-top">
+                                      {children}
+                                    </td>
+                                  ),
                                 }}
                               >
                                 {message.content}
@@ -376,7 +404,56 @@ export default function ChatView({
 
         <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#0b0b0c] via-[#0b0b0c] to-transparent px-4 pb-4 pt-16">
           <div className="pointer-events-auto mx-auto max-w-3xl">
-            <div className="rounded-[26px] border border-white/10 bg-[#202022] shadow-2xl shadow-black/30 transition focus-within:border-white/15">
+            <div className="overflow-hidden rounded-[26px] border border-white/10 bg-[#202022] shadow-2xl shadow-black/30 transition focus-within:border-white/15">
+              {pendingAttachments.length > 0 && (
+                <div className="flex gap-2 overflow-x-auto px-4 pt-4">
+                  {pendingAttachments.map((attachment) => (
+                    <div
+                      key={attachment.id}
+                      className="relative shrink-0"
+                    >
+                      {attachment.previewUrl ? (
+                        <img
+                          src={attachment.previewUrl}
+                          alt={attachment.file.name}
+                          className="h-20 w-20 rounded-xl border border-white/10 object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-20 w-40 items-center gap-2 rounded-xl border border-white/10 bg-black/15 px-3">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/5 text-[10px] font-semibold uppercase text-zinc-400">
+                            {attachment.file.name
+                              .split(".")
+                              .pop()
+                              ?.slice(0, 4) ?? "FILE"}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="truncate text-xs text-zinc-300">
+                              {attachment.file.name}
+                            </div>
+                            <div className="text-[10px] text-zinc-600">
+                              {formatFileSize(
+                                attachment.file.size
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          removeAttachment(attachment.id)
+                        }
+                        title="Remove attachment"
+                        className="absolute -right-1.5 -top-1.5 flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-zinc-800 text-xs text-zinc-300 shadow-lg hover:bg-zinc-700"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -390,23 +467,50 @@ export default function ChatView({
                   ) {
                     event.preventDefault();
 
-                    if (!sending && input.trim()) {
+                    if (
+                      !sending &&
+                      (input.trim() ||
+                        pendingAttachments.length > 0)
+                    ) {
                       sendMessage(input);
                     }
                   }
                 }}
                 rows={1}
                 disabled={sending}
-                placeholder="Ask anything"
+                placeholder={
+                  pendingAttachments.length > 0
+                    ? "Add a message about these files..."
+                    : "Ask anything"
+                }
                 className="max-h-[200px] min-h-[54px] w-full resize-none bg-transparent px-5 pb-2 pt-4 text-[15px] leading-6 text-zinc-100 outline-none placeholder:text-zinc-500 disabled:opacity-60"
               />
 
               <div className="flex items-center justify-between gap-3 px-3 pb-3">
                 <div className="flex items-center gap-2">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.txt,.md,.markdown,.csv,.json,.js,.jsx,.ts,.tsx,.html,.css,.py,.java,.c,.cpp,.h,.hpp,.cs,.go,.rs,.php,.rb,.sh,.sql,.xml,.yaml,.yml"
+                    className="hidden"
+                    onChange={(event) => {
+                      if (event.target.files) {
+                        addAttachments(event.target.files);
+                      }
+
+                      event.target.value = "";
+                    }}
+                  />
+
                   <button
                     type="button"
-                    title="Attachments coming later"
-                    className="flex h-8 w-8 items-center justify-center rounded-full text-xl font-light text-zinc-400 transition hover:bg-white/5 hover:text-zinc-200"
+                    disabled={sending}
+                    onClick={() =>
+                      fileInputRef.current?.click()
+                    }
+                    title="Attach files"
+                    className="flex h-8 w-8 items-center justify-center rounded-full text-xl font-light text-zinc-400 transition hover:bg-white/5 hover:text-zinc-200 disabled:opacity-40"
                   >
                     +
                   </button>
@@ -428,7 +532,9 @@ export default function ChatView({
                     <button
                       type="button"
                       disabled={sending}
-                      onClick={() => setSelectedModel("claude")}
+                      onClick={() =>
+                        setSelectedModel("claude")
+                      }
                       className={`rounded-full px-3 py-1.5 text-xs transition ${
                         selectedModel === "claude"
                           ? "bg-white/10 text-zinc-100"
@@ -452,7 +558,11 @@ export default function ChatView({
                 ) : (
                   <button
                     type="button"
-                    disabled={sending || !input.trim()}
+                    disabled={
+                      sending ||
+                      (!input.trim() &&
+                        pendingAttachments.length === 0)
+                    }
                     onClick={() => sendMessage(input)}
                     title="Send message"
                     className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-100 text-lg font-medium text-zinc-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-25"

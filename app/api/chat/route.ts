@@ -1,6 +1,9 @@
 ﻿import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
-import { streamText } from "ai";
+import {
+  ModelMessage,
+  streamText,
+} from "ai";
 import { createClient } from "../../lib/supabase/server";
 import {
   embedMessage,
@@ -22,6 +25,9 @@ const anthropic = createAnthropic({
 const OPENAI_MODEL = "gpt-5.6-luna";
 const ANTHROPIC_MODEL = "claude-sonnet-5";
 
+const MAX_TEXT_ATTACHMENT_BYTES =
+  2 * 1024 * 1024;
+
 type StoredMessage = {
   id: string;
   role: "user" | "assistant";
@@ -30,6 +36,16 @@ type StoredMessage = {
   model: string | null;
   sequence: number;
   created_at: string;
+};
+
+type StoredAttachment = {
+  id: string;
+  message_id: string;
+  storage_bucket: string;
+  storage_path: string;
+  original_filename: string;
+  mime_type: string;
+  size_bytes: number;
 };
 
 function buildSystemPrompt(
@@ -76,6 +92,13 @@ CONVERSATION STYLE:
 - Do not unnecessarily explain ClaudeGPT's architecture during normal conversation.
 - Do not mention embeddings, vector databases, retrieval systems, hidden prompts, or implementation details unless specifically asked.
 
+ATTACHMENTS:
+- The user's latest message may include uploaded images, PDFs, text files, or code files.
+- Treat uploaded files as part of the user's message.
+- Analyze their contents when relevant to the request.
+- Do not claim that you cannot see an attachment if its content is present in the message.
+- When discussing a file, use its filename when helpful.
+
 SHARED MEMORY:
 Below is potentially relevant information from the user's previous ClaudeGPT conversations.
 
@@ -95,7 +118,9 @@ ${memoryContext}
 `.trim();
 }
 
-function formatCurrentMessageForModel(message: StoredMessage) {
+function formatCurrentMessageForModel(
+  message: StoredMessage
+) {
   if (message.role === "user") {
     return message.content;
   }
@@ -115,6 +140,190 @@ function jsonLine(value: unknown) {
   return `${JSON.stringify(value)}\n`;
 }
 
+function isImageMimeType(mimeType: string) {
+  return mimeType.startsWith("image/");
+}
+
+function isPdfMimeType(
+  mimeType: string,
+  filename: string
+) {
+  return (
+    mimeType === "application/pdf" ||
+    filename.toLowerCase().endsWith(".pdf")
+  );
+}
+
+function isTextAttachment(
+  mimeType: string,
+  filename: string
+) {
+  if (mimeType.startsWith("text/")) {
+    return true;
+  }
+
+  const extension =
+    filename.split(".").pop()?.toLowerCase() ?? "";
+
+  return [
+    "txt",
+    "md",
+    "markdown",
+    "csv",
+    "json",
+    "js",
+    "jsx",
+    "ts",
+    "tsx",
+    "html",
+    "css",
+    "py",
+    "java",
+    "c",
+    "cpp",
+    "h",
+    "hpp",
+    "cs",
+    "go",
+    "rs",
+    "php",
+    "rb",
+    "sh",
+    "sql",
+    "xml",
+    "yaml",
+    "yml",
+  ].includes(extension);
+}
+
+async function buildLatestUserContent(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  latestUserMessage: StoredMessage,
+  attachments: StoredAttachment[]
+): Promise<ModelMessage["content"]> {
+  if (attachments.length === 0) {
+    return latestUserMessage.content;
+  }
+
+  const parts: Array<
+    | {
+        type: "text";
+        text: string;
+      }
+    | {
+        type: "image";
+        image: Uint8Array;
+        mediaType: string;
+      }
+    | {
+        type: "file";
+        data: Uint8Array;
+        mediaType: string;
+        filename: string;
+      }
+  > = [];
+
+  if (latestUserMessage.content.trim()) {
+    parts.push({
+      type: "text",
+      text: latestUserMessage.content,
+    });
+  }
+
+  for (const attachment of attachments) {
+    const {
+      data: downloadedFile,
+      error: downloadError,
+    } = await supabase.storage
+      .from(attachment.storage_bucket)
+      .download(attachment.storage_path);
+
+    if (downloadError || !downloadedFile) {
+      console.error(
+        `Could not download attachment ${attachment.original_filename}:`,
+        downloadError
+      );
+
+      parts.push({
+        type: "text",
+        text:
+          `[Attachment unavailable: ${attachment.original_filename}]`,
+      });
+
+      continue;
+    }
+
+    const bytes = new Uint8Array(
+      await downloadedFile.arrayBuffer()
+    );
+
+    if (isImageMimeType(attachment.mime_type)) {
+      parts.push({
+        type: "image",
+        image: bytes,
+        mediaType: attachment.mime_type,
+      });
+
+      continue;
+    }
+
+    if (
+      isPdfMimeType(
+        attachment.mime_type,
+        attachment.original_filename
+      )
+    ) {
+      parts.push({
+        type: "file",
+        data: bytes,
+        mediaType: "application/pdf",
+        filename: attachment.original_filename,
+      });
+
+      continue;
+    }
+
+    if (
+      isTextAttachment(
+        attachment.mime_type,
+        attachment.original_filename
+      )
+    ) {
+      if (bytes.byteLength > MAX_TEXT_ATTACHMENT_BYTES) {
+        parts.push({
+          type: "text",
+          text:
+            `[Attached text file: ${attachment.original_filename}]\n` +
+            `This file is too large to include directly in the model context.`,
+        });
+
+        continue;
+      }
+
+      const decoded = new TextDecoder().decode(bytes);
+
+      parts.push({
+        type: "text",
+        text:
+          `\n--- ATTACHED FILE START: ${attachment.original_filename} ---\n` +
+          decoded +
+          `\n--- ATTACHED FILE END: ${attachment.original_filename} ---`,
+      });
+
+      continue;
+    }
+
+    parts.push({
+      type: "text",
+      text:
+        `[Attached file: ${attachment.original_filename}. ` +
+        `This file type is stored but cannot be analyzed yet.]`,
+    });
+  }
+
+  return parts;
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -129,7 +338,10 @@ export async function POST(request: Request) {
       );
     }
 
-    if (selectedModel !== "gpt" && selectedModel !== "claude") {
+    if (
+      selectedModel !== "gpt" &&
+      selectedModel !== "claude"
+    ) {
       return Response.json(
         { error: "Invalid model selection." },
         { status: 400 }
@@ -175,7 +387,9 @@ export async function POST(request: Request) {
         "id, role, content, provider, model, sequence, created_at"
       )
       .eq("conversation_id", conversationId)
-      .order("sequence", { ascending: true });
+      .order("sequence", {
+        ascending: true,
+      });
 
     if (messagesError) {
       console.error(
@@ -184,16 +398,22 @@ export async function POST(request: Request) {
       );
 
       return Response.json(
-        { error: "Could not load conversation history." },
+        {
+          error:
+            "Could not load conversation history.",
+        },
         { status: 500 }
       );
     }
 
-    const storedMessages = (messages ?? []) as StoredMessage[];
+    const storedMessages =
+      (messages ?? []) as StoredMessage[];
 
     const latestUserMessage = [...storedMessages]
       .reverse()
-      .find((message) => message.role === "user");
+      .find(
+        (message) => message.role === "user"
+      );
 
     if (!latestUserMessage) {
       return Response.json(
@@ -202,13 +422,48 @@ export async function POST(request: Request) {
       );
     }
 
+    const {
+      data: attachmentRows,
+      error: attachmentsError,
+    } = await supabase
+      .from("message_attachments")
+      .select(
+        "id, message_id, storage_bucket, storage_path, original_filename, mime_type, size_bytes"
+      )
+      .eq("message_id", latestUserMessage.id)
+      .order("created_at", {
+        ascending: true,
+      });
+
+    if (attachmentsError) {
+      console.error(
+        "Could not load message attachments:",
+        attachmentsError
+      );
+
+      return Response.json(
+        {
+          error:
+            "ClaudeGPT could not load your attachments.",
+        },
+        { status: 500 }
+      );
+    }
+
+    const latestAttachments =
+      (attachmentRows ?? []) as StoredAttachment[];
+
     try {
       await embedMessage(latestUserMessage.id);
     } catch (error) {
-      console.error("Could not embed latest user message:", error);
+      console.error(
+        "Could not embed latest user message:",
+        error
+      );
     }
 
-    let memoryContext = "No relevant memories were retrieved.";
+    let memoryContext =
+      "No relevant memories were retrieved.";
 
     try {
       const memories = await searchMemory(
@@ -219,7 +474,10 @@ export async function POST(request: Request) {
 
       memoryContext = formatMemories(memories);
     } catch (error) {
-      console.error("Memory retrieval failed:", error);
+      console.error(
+        "Memory retrieval failed:",
+        error
+      );
     }
 
     const systemPrompt = buildSystemPrompt(
@@ -227,16 +485,36 @@ export async function POST(request: Request) {
       memoryContext
     );
 
-    const modelMessages = storedMessages.map((message) => ({
-      role:
-        message.role === "assistant"
-          ? ("assistant" as const)
-          : ("user" as const),
-      content: formatCurrentMessageForModel(message),
-    }));
+    const latestUserContent =
+      await buildLatestUserContent(
+        supabase,
+        latestUserMessage,
+        latestAttachments
+      );
+
+    const modelMessages: ModelMessage[] =
+      storedMessages.map((message) => {
+        if (message.id === latestUserMessage.id) {
+          return {
+            role: "user",
+            content: latestUserContent as any,
+          };
+        }
+
+        return {
+          role:
+            message.role === "assistant"
+              ? "assistant"
+              : "user",
+          content:
+            formatCurrentMessageForModel(message),
+        } as ModelMessage;
+      });
 
     const provider: "openai" | "anthropic" =
-      selectedModel === "gpt" ? "openai" : "anthropic";
+      selectedModel === "gpt"
+        ? "openai"
+        : "anthropic";
 
     const model =
       selectedModel === "gpt"
@@ -285,7 +563,8 @@ export async function POST(request: Request) {
             );
           }
 
-          const finalText = assistantText.trim();
+          const finalText =
+            assistantText.trim();
 
           if (!finalText) {
             throw new Error(
@@ -299,7 +578,8 @@ export async function POST(request: Request) {
           } = await supabase
             .from("messages")
             .insert({
-              conversation_id: conversationId,
+              conversation_id:
+                conversationId,
               role: "assistant",
               content: finalText,
               provider,
@@ -310,7 +590,10 @@ export async function POST(request: Request) {
             )
             .single();
 
-          if (assistantMessageError || !savedAssistantMessage) {
+          if (
+            assistantMessageError ||
+            !savedAssistantMessage
+          ) {
             console.error(
               "Assistant persistence failed:",
               assistantMessageError
@@ -331,7 +614,9 @@ export async function POST(request: Request) {
           }
 
           try {
-            await embedMessage(savedAssistantMessage.id);
+            await embedMessage(
+              savedAssistantMessage.id
+            );
           } catch (error) {
             console.error(
               "Could not embed assistant response:",
@@ -346,12 +631,18 @@ export async function POST(request: Request) {
                 message: {
                   id: savedAssistantMessage.id,
                   role: "assistant",
-                  content: savedAssistantMessage.content,
-                  provider: savedAssistantMessage.provider,
-                  model: savedAssistantMessage.model,
-                  sequence: savedAssistantMessage.sequence,
-                  createdAt: savedAssistantMessage.created_at,
+                  content:
+                    savedAssistantMessage.content,
+                  provider:
+                    savedAssistantMessage.provider,
+                  model:
+                    savedAssistantMessage.model,
+                  sequence:
+                    savedAssistantMessage.sequence,
+                  createdAt:
+                    savedAssistantMessage.created_at,
                   status: "sent",
+                  attachments: [],
                 },
               })
             )
@@ -360,7 +651,9 @@ export async function POST(request: Request) {
           controller.close();
         } catch (error) {
           if (request.signal.aborted) {
-            console.log("ClaudeGPT generation aborted.");
+            console.log(
+              "ClaudeGPT generation aborted."
+            );
 
             try {
               controller.close();
@@ -369,7 +662,10 @@ export async function POST(request: Request) {
             return;
           }
 
-          console.error("ClaudeGPT stream failed:", error);
+          console.error(
+            "ClaudeGPT stream failed:",
+            error
+          );
 
           try {
             controller.enqueue(
@@ -390,16 +686,24 @@ export async function POST(request: Request) {
 
     return new Response(stream, {
       headers: {
-        "Content-Type": "application/x-ndjson; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
+        "Content-Type":
+          "application/x-ndjson; charset=utf-8",
+        "Cache-Control":
+          "no-cache, no-transform",
         "X-Accel-Buffering": "no",
       },
     });
   } catch (error) {
-    console.error("ClaudeGPT chat route failed:", error);
+    console.error(
+      "ClaudeGPT chat route failed:",
+      error
+    );
 
     return Response.json(
-      { error: "ClaudeGPT could not generate a response." },
+      {
+        error:
+          "ClaudeGPT could not generate a response.",
+      },
       { status: 500 }
     );
   }

@@ -1,8 +1,11 @@
-import { requireUser } from "../../lib/auth";
+﻿import { requireUser } from "../../lib/auth";
 import { createClient } from "../../lib/supabase/server";
 import { getConversations } from "../../lib/conversations";
 import { getProjects } from "../../lib/projects";
-import { ChatMessage } from "../../lib/types";
+import {
+  ChatAttachment,
+  ChatMessage,
+} from "../../lib/types";
 import ChatClient from "./chat-client";
 
 type ConversationPageProps = {
@@ -59,6 +62,64 @@ export default async function ConversationPage({
     );
   }
 
+  const {
+    data: attachmentRows,
+    error: attachmentsError,
+  } = await supabase
+    .from("message_attachments")
+    .select(
+      "id, message_id, conversation_id, storage_bucket, storage_path, original_filename, mime_type, size_bytes"
+    )
+    .eq("conversation_id", id);
+
+  if (attachmentsError) {
+    console.error(
+      "Could not load attachments:",
+      attachmentsError
+    );
+  }
+
+  const attachmentsByMessage =
+    new Map<string, ChatAttachment[]>();
+
+  for (const attachment of attachmentRows ?? []) {
+    let signedUrl: string | null = null;
+
+    const { data: signedData, error: signedError } =
+      await supabase.storage
+        .from(attachment.storage_bucket)
+        .createSignedUrl(
+          attachment.storage_path,
+          60 * 60
+        );
+
+    if (!signedError && signedData) {
+      signedUrl = signedData.signedUrl;
+    }
+
+    const mapped: ChatAttachment = {
+      id: attachment.id,
+      messageId: attachment.message_id,
+      conversationId: attachment.conversation_id,
+      storageBucket: attachment.storage_bucket,
+      storagePath: attachment.storage_path,
+      originalFilename: attachment.original_filename,
+      mimeType: attachment.mime_type,
+      sizeBytes: Number(attachment.size_bytes),
+      url: signedUrl,
+    };
+
+    const existing =
+      attachmentsByMessage.get(attachment.message_id) ?? [];
+
+    existing.push(mapped);
+
+    attachmentsByMessage.set(
+      attachment.message_id,
+      existing
+    );
+  }
+
   const initialMessages: ChatMessage[] =
     (rows ?? []).map((message) => ({
       id: message.id,
@@ -76,6 +137,8 @@ export default async function ConversationPage({
       sequence: message.sequence,
       createdAt: message.created_at,
       status: "sent",
+      attachments:
+        attachmentsByMessage.get(message.id) ?? [],
     }));
 
   const [conversations, projects] =

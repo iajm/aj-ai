@@ -1,8 +1,26 @@
-export type ModelId = "gpt" | "claude";
+﻿export type ModelId = "gpt" | "claude";
 
 export type MessageStatus = "pending" | "sent" | "failed";
 
 export type MessageProvider = "openai" | "anthropic" | null;
+
+export type ChatAttachment = {
+  id: string;
+  messageId: string;
+  conversationId: string;
+  originalFilename: string;
+  mimeType: string;
+  sizeBytes: number;
+  storageBucket: string;
+  storagePath: string;
+  url?: string | null;
+};
+
+export type PendingAttachment = {
+  id: string;
+  file: File;
+  previewUrl: string | null;
+};
 
 export type ChatMessage = {
   id: string;
@@ -15,6 +33,8 @@ export type ChatMessage = {
   sequence: number | null;
   createdAt: string;
   status: MessageStatus;
+
+  attachments?: ChatAttachment[];
 };
 
 export type ConversationSummary = {
